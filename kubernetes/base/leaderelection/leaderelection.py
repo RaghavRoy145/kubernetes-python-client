@@ -38,6 +38,10 @@ lease.
 
 
 class LeaderElection:
+    """
+
+    inv: self.observed_time_milliseconds >= 0
+    """
     def __init__(self, election_config):
         if election_config is None:
             sys.exit("argument config not passed")
@@ -53,6 +57,9 @@ class LeaderElection:
 
     # Point of entry to Leader election
     def run(self):
+        """
+        post: __return__ is None
+        """
         # Try to create/ acquire a lock
         if self.acquire():
             logging.info("{} successfully acquired lease".format(self.election_config.lock.identity))
@@ -67,6 +74,11 @@ class LeaderElection:
             self.election_config.onstopped_leading()
 
     def acquire(self):
+        """
+
+        pre: (self.election_config.retry_period > 1)  
+        post: __return__ is True
+        """
         # Follower
         logging.info("{} is a follower".format(self.election_config.lock.identity))
         retry_period = self.election_config.retry_period
@@ -80,6 +92,11 @@ class LeaderElection:
             time.sleep(retry_period)
 
     def renew_loop(self):
+        """
+
+        pre:  (self.election_config.lease_duration > 1)
+        post: (__return__ is True and self.observed_record is not None) or (__return__ is False)
+        """
         # Leader
         logging.info("Leader has entered renew loop and will try to update lease continuously")
 
@@ -105,6 +122,9 @@ class LeaderElection:
             return
 
     def try_acquire_or_renew(self):
+        """
+        post: (__return__ is True and self.observed_record == leader_election_record and self.observed_time_milliseconds > 0) or (__return__ is False)
+        """
         now_timestamp = time.time()
         now = datetime.datetime.fromtimestamp(now_timestamp)
 
