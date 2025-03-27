@@ -22,6 +22,7 @@ import logging
 from kubernetes.client.rest import ApiException
 from kubernetes import client, config
 from kubernetes.client.api_client import ApiClient
+import signal
 
 
 # if condition to be removed when support for python2 will be removed
@@ -40,6 +41,12 @@ At first all candidates are considered followers. The one to create a lock or up
 an existing lock first becomes the leader and remains so until it keeps renewing its
 lease.
 """
+
+def handle_sigint(signal_received, frame):
+    print("\nSIGINT received! Cancelling election...")
+    if LeaderElection.global_context:
+        LeaderElection.global_context.cancel()
+
 
 class LeaderElectionRecord:
     # Annotation used in the lock object
@@ -170,7 +177,7 @@ class ConfigMapLock:
 class Config:
 
     # Validate config, exit if an error is detected
-    def __init__(self, lock, lease_duration: int, renew_deadline: int, retry_period: int, onstarted_leading, onstopped_leading):
+    def __init__(self, lock: ConfigMapLock, lease_duration: int, renew_deadline: int, retry_period: int, onstarted_leading, onstopped_leading, context: Context):
         """
 
         pre: (lease_duration > renew_deadline)
@@ -230,18 +237,17 @@ class LeaderElection:
 
     inv: self.observed_time_milliseconds >= 0
     """
+    global_context = None
     def __init__(self, election_config):
-        if election_config is None:
-            sys.exit("argument config not passed")
-
-        # Latest record observed in the created lock object
+        #if election_config is None or not (hasattr(election_config, "lock") and hasattr(election_config, "context") and hasattr(election_config.context, "cancelled")):
+        #    sys.exit("Invalid election_config: must have 'lock' and 'context' with 'cancelled'")
         self.observed_record = None
-
-        # The configuration set for this candidate
         self.election_config = election_config
-
-        # Latest update time of the lock
         self.observed_time_milliseconds = 0
+        LeaderElection.global_context = self.election_config.context
+
+        # Attach signal handler to Ctrl+C (SIGINT)
+        signal.signal(signal.SIGINT, handle_sigint)
 
     # Point of entry to Leader election
     def run(self):
@@ -282,31 +288,41 @@ class LeaderElection:
     def renew_loop(self):
         """
 
-        pre:  (self.election_config.lease_duration > 1)
-        post: (__return__ is True and self.observed_record is not None) or (__return__ is False)
+        pre: (self.election_config.renew_deadline > 1)
+             (self.election_config.retry_period > 1)
+             (self.election_config.renew_deadline > self.jitter_factor * self.election_config.retry_period)
+        post: self.election_config.context.cancelled and (time.time() - start_time > self.election_config.retry_period)
         """
-        # Leader
+        start_time = time.time()
         logging.info("Leader has entered renew loop and will try to update lease continuously")
-
         retry_period = self.election_config.retry_period
-        renew_deadline = self.election_config.renew_deadline * 1000
+        renew_deadline = self.election_config.renew_deadline * 1000  # convert to milliseconds
 
         while True:
+            # Check for context cancellation
+            if self.election_config.context.cancelled:
+                logging.info(f"Context cancelled. Reason: {self.election_config.context.cancel_reason}")
+                # If configured to release on cancel, release the lease immediately
+                # if getattr(self.election_config, "ReleaseOnCancel", False):
+                # self.force_expire_lease()
+                return
+            
             timeout = int(time.time() * 1000) + renew_deadline
             succeeded = False
 
             while int(time.time() * 1000) < timeout:
-                succeeded = self.try_acquire_or_renew()
+                if self.election_config.context.cancelled:
+                    logging.info(f"Context cancelled during renew loop. Reason: {self.election_config.context.cancel_reason}")
+                    # self.force_expire_lease()
+                    return
 
-                if succeeded:
+                if self.try_acquire_or_renew():
+                    succeeded = True
                     break
                 time.sleep(retry_period)
-
             if succeeded:
                 time.sleep(retry_period)
                 continue
-
-            # failed to renew, return
             return
 
     def try_acquire_or_renew(self):
@@ -383,7 +399,7 @@ class LeaderElection:
 
         return self.update_lock(leader_election_record)
 
-    def update_lock(self, leader_election_record):
+    def update_lock(self, leader_election_record: LeaderElectionRecord):
         # Update object with latest election record
         update_status = self.election_config.lock.update(self.election_config.lock.name,
                                                          self.election_config.lock.namespace,
