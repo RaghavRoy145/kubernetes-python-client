@@ -33,7 +33,7 @@ lock_name = "examplepython"
 # Kubernetes namespace
 lock_namespace = "default"
 
-
+context = electionconfig.Context()
 # The function that a user wants to run once a candidate is elected as a leader
 def example_func():
     print("I am leader")
@@ -45,7 +45,7 @@ def example_func():
 # Create config
 config = electionconfig.Config(ConfigMapLock(lock_name, lock_namespace, candidate_id), lease_duration=17,
                                renew_deadline=15, retry_period=5, onstarted_leading=example_func,
-                               onstopped_leading=None)
+                               onstopped_leading=None, context=context)
 
 # Enter leader election
 leaderelection.LeaderElection(config).run()
