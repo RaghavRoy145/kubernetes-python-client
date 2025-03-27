@@ -20,7 +20,7 @@ from kubernetes.leaderelection import electionconfig
 
 
 # Authenticate using config file
-config.load_kube_config(config_file=r"")
+config.load_kube_config(config_file=r"~/.kube/config")
 
 # Parameters required from the user
 
