@@ -14,10 +14,9 @@
 
 import uuid
 from kubernetes import client, config
-from kubernetes.leaderelection import leaderelection
-from kubernetes.leaderelection.resourcelock.configmaplock import ConfigMapLock
-from kubernetes.leaderelection import electionconfig
-
+import leaderelection
+from resourcelock.configmaplock import ConfigMapLock
+import electionconfig
 
 # Authenticate using config file
 config.load_kube_config(config_file=r"~/.kube/config")
@@ -33,7 +32,9 @@ lock_name = "examplepython"
 # Kubernetes namespace
 lock_namespace = "default"
 
-context = electionconfig.Context()
+context = leaderelection.Context()
+
+
 # The function that a user wants to run once a candidate is elected as a leader
 def example_func():
     print("I am leader")
@@ -48,7 +49,13 @@ config = electionconfig.Config(ConfigMapLock(lock_name, lock_namespace, candidat
                                onstopped_leading=None, context=context)
 
 # Enter leader election
+#leaderelection.LeaderElection(config).run()
+#try:
 leaderelection.LeaderElection(config).run()
-
+#except KeyboardInterrupt:
+    # Call the cancellation method explicitly
+#    leaderelection.global_context.cancel()
+#    print("KeyboardInterrupt caught, cancellin`g election.")
 # User can choose to do another round of election or simply exit
 print("Exited leader election")
+

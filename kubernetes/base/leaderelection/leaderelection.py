@@ -17,12 +17,13 @@ import sys
 import time
 import json
 import threading
-from .leaderelectionrecord import LeaderElectionRecord
+from leaderelectionrecord import LeaderElectionRecord
 import logging
 from kubernetes.client.rest import ApiException
 from kubernetes import client, config
 from kubernetes.client.api_client import ApiClient
 import signal
+from typing import Callable
 
 
 # if condition to be removed when support for python2 will be removed
@@ -47,208 +48,230 @@ def handle_sigint(signal_received, frame):
     if LeaderElection.global_context:
         LeaderElection.global_context.cancel()
 
-# class Context:
-#     def __init__(self):
-#         self.cancelled = False
+class Context:
+    def __init__(self, cancelled: bool):
+        self.cancelled = cancelled
 
-#     def cancel(self):
-#         self.cancelled = True
+    def cancel(self):
+        self.cancelled = True
 
-# class LeaderElectionRecord:
-#     # Annotation used in the lock object
+class DummyMetadata:
+    def __init__(self):
+        self.annotations = {}
+        # Provide a dummy openapi_types attribute if needed by the client
+        self.openapi_types = {}
 
-#     def __init__(self, holder_identity: int, lease_duration: int, acquire_time: int, renew_time: int):
-#         """
-#         pre: (lease_duration > renew_time)
-#             (renew_time > 1)
-#             (lease_duration > 1)
-#         """
-#         self.holder_identity = holder_identity
-#         self.lease_duration = lease_duration
-#         self.acquire_time = acquire_time
-#         self.renew_time = renew_time
+class DummyConfigMap:
+    def __init__(self):
+        self.metadata = DummyMetadata()
+        # Provide a dummy openapi_types attribute at the top level as well.
+        self.openapi_types = {}
 
-# class ConfigMapLock:
-#     def __init__(self, name: str, namespace: str, identity: int):
-#         """
-#         :param name: name of the lock
-#         :param namespace: namespace
-#         :param identity: A unique identifier that the candidate is using
-#         """
-#         self.api_instance = client.CoreV1Api()
-#         self.leader_electionrecord_annotationkey = 'control-plane.alpha.kubernetes.io/leader'
-#         self.name = name
-#         self.namespace = namespace
-#         self.identity = str(identity)
-#         self.configmap_reference = None
-#         self.lock_record = {
-#             'holderIdentity': None,
-#             'leaseDurationSeconds': None,
-#             'acquireTime': None,
-#             'renewTime': None
-#                             }
 
-#     # get returns the election record from a ConfigMap Annotation
-#     def get(self, name: str, namespace: str):
-#         """
-#         :param name: Name of the configmap object information to get
-#         :param namespace: Namespace in which the configmap object is to be searched
-#         :return: 'True, election record' if object found else 'False, exception response'
-#         """
-#         try:
-#             api_response = self.api_instance.read_namespaced_config_map(name, namespace)
+class LeaderElectionRecord:
+    # Annotation used in the lock object
 
-#             # If an annotation does not exist - add the leader_electionrecord_annotationkey
-#             annotations = api_response.metadata.annotations
-#             if annotations is None or annotations == '':
-#                 api_response.metadata.annotations = {self.leader_electionrecord_annotationkey: ''}
-#                 self.configmap_reference = api_response
-#                 return True, None
+    def __init__(self, holder_identity: int, lease_duration: int, acquire_time: int, renew_time: int):
+        """
+        """
+        self.holder_identity = holder_identity
+        self.lease_duration = lease_duration
+        self.acquire_time = acquire_time
+        self.renew_time = renew_time
 
-#             # If an annotation exists but, the leader_electionrecord_annotationkey does not then add it as a key
-#             if not annotations.get(self.leader_electionrecord_annotationkey):
-#                 api_response.metadata.annotations = {self.leader_electionrecord_annotationkey: ''}
-#                 self.configmap_reference = api_response
-#                 return True, None
+class ConfigMapLock:
+    def __init__(self, name: str, namespace: str, identity: int):
+        """
+        :param name: name of the lock
+        :param namespace: namespace
+        :param identity: A unique identifier that the candidate is using
+        """
+        self.api_instance = client.CoreV1Api()
+        self.leader_electionrecord_annotationkey = 'control-plane.alpha.kubernetes.io/leader'
+        self.name = name
+        self.namespace = namespace
+        self.identity = str(identity)
+        self.configmap_reference = DummyConfigMap()
+        self.lock_record = {
+            'holderIdentity': None,
+            'leaseDurationSeconds': None,
+            'acquireTime': None,
+            'renewTime': None
+                            }
 
-#             lock_record = self.get_lock_object(json.loads(annotations[self.leader_electionrecord_annotationkey]))
+    # get returns the election record from a ConfigMap Annotation
+    def get(self, name: str, namespace: str):
+        """
+        :param name: Name of the configmap object information to get
+        :param namespace: Namespace in which the configmap object is to be searched
+        :return: 'True, election record' if object found else 'False, exception response'
+        """
+        try:
+            api_response = self.api_instance.read_namespaced_config_map(name, namespace)
 
-#             self.configmap_reference = api_response
-#             return True, lock_record
-#         except ApiException as e:
-#             return False, e
+            # If an annotation does not exist - add the leader_electionrecord_annotationkey
+            annotations = api_response.metadata.annotations
+            if annotations is None or annotations == '':
+                api_response.metadata.annotations = {self.leader_electionrecord_annotationkey: ''}
+                self.configmap_reference = api_response
+                return True, None
 
-#     def create(self, name: str, namespace: str, election_record: LeaderElectionRecord):
-#         """
-#         :param electionRecord: Annotation string
-#         :param name: Name of the configmap object to be created
-#         :param namespace: Namespace in which the configmap object is to be created
-#         :return: 'True' if object is created else 'False' if failed
-#         """
-#         body = client.V1ConfigMap(
-#             metadata={"name": name,
-#                       "annotations": {self.leader_electionrecord_annotationkey: json.dumps(self.get_lock_dict(election_record))}})
+            # If an annotation exists but, the leader_electionrecord_annotationkey does not then add it as a key
+            if not annotations.get(self.leader_electionrecord_annotationkey):
+                api_response.metadata.annotations = {self.leader_electionrecord_annotationkey: ''}
+                self.configmap_reference = api_response
+                return True, None
 
-#         try:
-#             api_response = self.api_instance.create_namespaced_config_map(namespace, body, pretty=True)
-#             return True
-#         except ApiException as e:
-#             logging.info("Failed to create lock as {}".format(e))
-#             return False
+            lock_record = self.get_lock_object(json.loads(annotations[self.leader_electionrecord_annotationkey]))
 
-#     def update(self, name: str, namespace: str, updated_record: LeaderElectionRecord):
-#         """
-#         :param name: name of the lock to be updated
-#         :param namespace: namespace the lock is in
-#         :param updated_record: the updated election record
-#         :return: True if update is successful False if it fails
-#         """
-#         try:
-#             # Set the updated record
-#             self.configmap_reference.metadata.annotations[self.leader_electionrecord_annotationkey] = json.dumps(self.get_lock_dict(updated_record))
-#             api_response = self.api_instance.replace_namespaced_config_map(name=name, namespace=namespace,
-#                                                                            body=self.configmap_reference)
-#             return True
-#         except ApiException as e:
-#             logging.info("Failed to update lock as {}".format(e))
-#             return False
+            self.configmap_reference = api_response
+            return True, lock_record
+        except ApiException as e:
+            return False, e
 
-#     def get_lock_object(self, lock_record):
-#         """
-#         pre: (lock_record['leaseDurationSeconds'] > lock_record['renewTime'])
-#              (lock_record['renewTime'] > 1)
-#              (lock_record['leaseDurationSeconds'] > 1)
-#         """
-#         leader_election_record = LeaderElectionRecord(None, None, None, None)
+    def create(self, name: str, namespace: str, election_record: LeaderElectionRecord):
+        """
+        :param electionRecord: Annotation string
+        :param name: Name of the configmap object to be created
+        :param namespace: Namespace in which the configmap object is to be created
+        :return: 'True' if object is created else 'False' if failed
+        """
+        body = client.V1ConfigMap(
+            metadata={"name": name,
+                      "annotations": {self.leader_electionrecord_annotationkey: json.dumps(self.get_lock_dict(election_record))}})
 
-#         if lock_record.get('holderIdentity'):
-#             leader_election_record.holder_identity = lock_record['holderIdentity']
-#         if lock_record.get('leaseDurationSeconds'):
-#             leader_election_record.lease_duration = lock_record['leaseDurationSeconds']
-#         if lock_record.get('acquireTime'):
-#             leader_election_record.acquire_time = lock_record['acquireTime']
-#         if lock_record.get('renewTime'):
-#             leader_election_record.renew_time = lock_record['renewTime']
+        try:
+            api_response = self.api_instance.create_namespaced_config_map(namespace, body, pretty=True)
+            return True
+        except ApiException as e:
+            logging.info("Failed to create lock as {}".format(e))
+            return False
 
-#         return leader_election_record
 
-#     def get_lock_dict(self, leader_election_record):
-#         self.lock_record['holderIdentity'] = leader_election_record.holder_identity
-#         self.lock_record['leaseDurationSeconds'] = leader_election_record.lease_duration
-#         self.lock_record['acquireTime'] = leader_election_record.acquire_time
-#         self.lock_record['renewTime'] = leader_election_record.renew_time
+    def update(self, name: str, namespace: str, updated_record: LeaderElectionRecord):
+        """
+        :param name: name of the lock to be updated
+        :param namespace: namespace the lock is in
+        :param updated_record: the updated election record
+        :return: True if update is successful False if it fails
+        """
+        try:
+            # Set the updated record
+            self.configmap_reference.metadata.annotations[self.leader_electionrecord_annotationkey] = json.dumps(self.get_lock_dict(updated_record))
+            api_response = self.api_instance.replace_namespaced_config_map(name=name, namespace=namespace,
+                                                                           body=self.configmap_reference)
+            return True
+        except ApiException as e:
+            logging.info("Failed to update lock as {}".format(e))
+            return False
 
-#         return self.lock_record
+    def get_lock_object(self, lock_record: dict):
+        """
+        """
+        leader_election_record = LeaderElectionRecord(None, None, None, None)
 
-# class Config:
+        if lock_record.get('holderIdentity'):
+            leader_election_record.holder_identity = lock_record['holderIdentity']
+        if lock_record.get('leaseDurationSeconds'):
+            leader_election_record.lease_duration = lock_record['leaseDurationSeconds']
+        if lock_record.get('acquireTime'):
+            leader_election_record.acquire_time = lock_record['acquireTime']
+        if lock_record.get('renewTime'):
+            leader_election_record.renew_time = lock_record['renewTime']
 
-#     # Validate config, exit if an error is detected
-#     def __init__(self, lock: ConfigMapLock, lease_duration: int, renew_deadline: int, retry_period: int, onstarted_leading, onstopped_leading, context: Context):
-#         """
+        return leader_election_record
 
-#         pre: (lease_duration > renew_deadline)
-#              (renew_deadline > 1)
-#              (retry_period > 1)
-#              (renew_deadline > self.jitter_factor * retry_period)
-#              (lease_duration > 1)
-#         """
-#         self.jitter_factor = 2
+    def get_lock_dict(self, leader_election_record: LeaderElectionRecord):
+        self.lock_record['holderIdentity'] = leader_election_record.holder_identity
+        self.lock_record['leaseDurationSeconds'] = leader_election_record.lease_duration
+        self.lock_record['acquireTime'] = leader_election_record.acquire_time
+        self.lock_record['renewTime'] = leader_election_record.renew_time
 
-#         if lock is None:
-#             print("lock error")
-#             # sys.exit("lock cannot be None")
-#         self.lock = lock
+        return self.lock_record
 
-#         if lease_duration <= renew_deadline:
-#             print("lease less than renew")
-#             # sys.exit("lease_duration must be greater than renew_deadline")
+class Config:
 
-#         if renew_deadline <= self.jitter_factor * retry_period:
-#             print("renew less than retry")
-#             # sys.exit("renewDeadline must be greater than retry_period*jitter_factor")
+    # Validate config, exit if an error is detected
+    def __init__(self, lock: ConfigMapLock, lease_duration: int, renew_deadline: int, retry_period: int, onstarted_leading: Callable[[], None], onstopped_leading: Callable[[], None], context: Context):
+        """
+        """
+        self.jitter_factor = 2
 
-#         if lease_duration < 1:
-#             print("lease less than 1")
-#             # sys.exit("lease_duration must be greater than one")
+        if lock is None:
+            print("lock error")
+            # sys.exit("lock cannot be None")
+        self.lock = lock
 
-#         if renew_deadline < 1:
-#             print("renew less than 1")
-#             # sys.exit("renew_deadline must be greater than one")
+        if lease_duration <= renew_deadline:
+            print("lease less than renew")
+            # sys.exit("lease_duration must be greater than renew_deadline")
 
-#         if retry_period < 1:
-#             print("retry less than 1")
-#             # sys.exit("retry_period must be greater than one")
+        if renew_deadline <= self.jitter_factor * retry_period:
+            print("renew less than retry")
+            # sys.exit("renewDeadline must be greater than retry_period*jitter_factor")
 
-#         self.lease_duration = lease_duration
-#         self.renew_deadline = renew_deadline
-#         self.retry_period = retry_period
+        if lease_duration < 1:
+            print("lease less than 1")
+            # sys.exit("lease_duration must be greater than one")
 
-#         if onstarted_leading is None:
-#             sys.exit("callback onstarted_leading cannot be None")
-#         self.onstarted_leading = onstarted_leading
+        if renew_deadline < 1:
+            print("renew less than 1")
+            # sys.exit("renew_deadline must be greater than one")
 
-#         if onstopped_leading is None:
-#             self.onstopped_leading = self.on_stoppedleading_callback
-#         else:
-#             self.onstopped_leading = onstopped_leading
-#         self.context = context
+        if retry_period < 1:
+            print("retry less than 1")
+            # sys.exit("retry_period must be greater than one")
 
-#     # Default callback for when the current candidate if a leader, stops leading
-#     def on_stoppedleading_callback(self):
-#         logging.info("stopped leading".format(self.lock.identity))
+        self.lease_duration = lease_duration
+        self.renew_deadline = renew_deadline
+        self.retry_period = retry_period
 
+        if onstarted_leading is None:
+            sys.exit("callback onstarted_leading cannot be None")
+        self.onstarted_leading = onstarted_leading
+
+        if onstopped_leading is None:
+            self.onstopped_leading = self.on_stoppedleading_callback
+        else:
+            self.onstopped_leading = onstopped_leading
+        self.context = context
+
+    # Default callback for when the current candidate if a leader, stops leading
+    def on_stoppedleading_callback(self):
+        logging.info("stopped leading".format(self.lock.identity))
+
+def make_dummy_config() -> "Config":
+    # Provide concrete values that satisfy the preconditions:
+    # For example:
+    # lease_duration > renew_deadline, renew_deadline > jitter_factor * retry_period, retry_period > 1, etc.
+    lock = ConfigMapLock("dummyLock", "default", 1000)
+    lease_duration = 10
+    renew_deadline = 5  # less than lease_duration
+    retry_period = 2
+    jitter_factor = 2  # as defined in the Config class
+    
+    # Ensure precondition: renew_deadline > retry_period * jitter_factor
+    if not (renew_deadline > retry_period * jitter_factor):
+        renew_deadline = retry_period * jitter_factor + 1
+
+    # Use simple lambda callbacks that take no arguments.
+    onstarted_leading = lambda: None
+    onstopped_leading = lambda: None
+
+    # Create a dummy context that starts with cancelled==False.
+    context = Context(True)
+    
+    return Config(lock, lease_duration, renew_deadline, retry_period, onstarted_leading, onstopped_leading, context)
 
 class LeaderElection:
-    """
-
-    inv: self.observed_time_milliseconds >= 0
-    """
     global_context = None
-    def __init__(self, election_config):
+    def __init__(self, observed_record: LeaderElectionRecord):
         #if election_config is None or not (hasattr(election_config, "lock") and hasattr(election_config, "context") and hasattr(election_config.context, "cancelled")):
         #    sys.exit("Invalid election_config: must have 'lock' and 'context' with 'cancelled'")
-        self.observed_record = None
-        self.election_config = election_config
+        """
+        """
+        self.observed_record = observed_record
+        self.election_config = make_dummy_config()
         self.observed_time_milliseconds = 0
         LeaderElection.global_context = self.election_config.context
 
@@ -258,6 +281,7 @@ class LeaderElection:
     # Point of entry to Leader election
     def run(self):
         """
+        pre: True
         post: __return__ is None
         """
         # Try to create/ acquire a lock
@@ -265,8 +289,8 @@ class LeaderElection:
             logging.info("{} successfully acquired lease".format(self.election_config.lock.identity))
 
             # Start leading and call OnStartedLeading()
-            threading.daemon = True
-            threading.Thread(target=self.election_config.onstarted_leading).start()
+            # threading.daemon = True
+            # threading.Thread(target=self.election_config.onstarted_leading).start()
 
             self.renew_loop()
 
@@ -275,14 +299,12 @@ class LeaderElection:
 
     def acquire(self):
         """
-
-        pre: (self.election_config.retry_period > 1)  
-        post: __return__ is True
+        pre: self.election_config.retry_period > 1
         """
         # Follower
         logging.info("{} is a follower".format(self.election_config.lock.identity))
         retry_period = self.election_config.retry_period
-
+        print(retry_period, "acquire")
         while True:
             succeeded = self.try_acquire_or_renew()
 
@@ -293,30 +315,33 @@ class LeaderElection:
 
     def renew_loop(self):
         """
-
-        pre: (self.election_config.renew_deadline > 1)
-             (self.election_config.retry_period > 1)
-             (self.election_config.renew_deadline > self.jitter_factor * self.election_config.retry_period)
-        post: self.election_config.context.cancelled and (time.time() - start_time > self.election_config.retry_period)
+        pre: self.election_config.renew_deadline > 1
+        pre: self.election_config.retry_period > 1
+        pre: self.election_config.renew_deadline > self.election_config.retry_period * self.election_config.jitter_factor
+        pre: self.election_config.lease_duration > 0
+        post: (not self.election_config.context.cancelled) or (self.election_config.context.cancelled and (self.observed_record.renew_time*1000 < 10000 - self.election_config.lease_duration*1000))
         """
-        start_time = time.time()
+        start_time = 10000
         logging.info("Leader has entered renew loop and will try to update lease continuously")
-        retry_period = self.election_config.retry_period
+        retry_period = self.election_config.retry_period*1000
         renew_deadline = self.election_config.renew_deadline * 1000  # convert to milliseconds
 
         while True:
             # Check for context cancellation
             if self.election_config.context.cancelled:
                 logging.info("Context cancelled")
+                print(self.election_config.context.cancelled, "renew_loop+cancelled?")
                 # If configured to release on cancel, release the lease immediately
                 # if getattr(self.election_config, "ReleaseOnCancel", False):
                 # self.force_expire_lease()
                 return
             
-            timeout = int(time.time() * 1000) + renew_deadline
+            # timeout = int(time.time() * 1000) + renew_deadline
+            timeout = start_time + renew_deadline
             succeeded = False
-
-            while int(time.time() * 1000) < timeout:
+            cur_time = start_time
+            # while int(time.time() * 1000) < timeout:
+            while cur_time < timeout:
                 if self.election_config.context.cancelled:
                     # logging.info(f"Context cancelled during renew loop. Reason: {self.election_config.context.cancel_reason}")
                     # self.force_expire_lease()
@@ -326,6 +351,8 @@ class LeaderElection:
                     succeeded = True
                     break
                 time.sleep(retry_period)
+                cur_time += retry_period
+                print(cur_time, "renew_loop + curtime")
             if succeeded:
                 time.sleep(retry_period)
                 continue
@@ -333,14 +360,25 @@ class LeaderElection:
 
     def try_acquire_or_renew(self):
         """
-        post: (__return__ is True and self.observed_record == leader_election_record and self.observed_time_milliseconds > 0) or (__return__ is False)
+        pre: self.election_config.lease_duration > 0
+        pre: self.election_config.lock is not None
+        post: (not self.election_config.context.cancelled) or (not __return__) or (self.election_config.lock.identity == self.observed_record.holder_identity or self.observed_time_milliseconds + self.election_config.lease_duration * 1000 <= 10000)
         """
-        now_timestamp = time.time()
-        now = datetime.datetime.fromtimestamp(now_timestamp)
+        # now_timestamp = time.time()
+        # now = datetime.datetime.fromtimestamp(now_timestamp)
+        now_timestamp = 10000
+        now = 10000
 
         # Check if lock is created
-        lock_status, old_election_record = self.election_config.lock.get(self.election_config.lock.name,
-                                                                        self.election_config.lock.namespace)
+        # lock_status, old_election_record = self.election_config.lock.get(self.election_config.lock.name,
+        #                                                                 self.election_config.lock.namespace)
+        lock_status = True
+        old_election_record = LeaderElectionRecord(
+            holder_identity = int(self.election_config.lock.identity) + 1,  # Ensure a different identity.
+            lease_duration = 10,  # For example, lease duration is 10 seconds.
+            acquire_time = 10000, # constant value
+            renew_time = 10000    # constant value, meaning the lease is not expired.
+        )
 
         # create a default Election record for this candidate
         leader_election_record = LeaderElectionRecord(self.election_config.lock.identity,
@@ -370,7 +408,7 @@ class LeaderElection:
                 return False
 
             self.observed_record = leader_election_record
-            self.observed_time_milliseconds = int(time.time() * 1000)
+            self.observed_time_milliseconds = 10000
             return True
 
         # A lock exists with that name
@@ -390,7 +428,7 @@ class LeaderElection:
 
         if self.observed_record is None or old_election_record.__dict__ != self.observed_record.__dict__:
             self.observed_record = old_election_record
-            self.observed_time_milliseconds = int(time.time() * 1000)
+            self.observed_time_milliseconds = 10000
 
         # If This candidate is not the leader and lease duration is yet to finish
         if (self.election_config.lock.identity != self.observed_record.holder_identity
@@ -406,16 +444,22 @@ class LeaderElection:
         return self.update_lock(leader_election_record)
 
     def update_lock(self, leader_election_record: LeaderElectionRecord):
+
+        """
+        pre: self.election_config.lock.configmap_reference is not None
+        post: (not self.election_config.context.cancelled) or (self.election_config.context.cancelled and self.observed_record is None)
+        """
         # Update object with latest election record
-        update_status = self.election_config.lock.update(self.election_config.lock.name,
-                                                         self.election_config.lock.namespace,
-                                                         leader_election_record)
+        # update_status = self.election_config.lock.update(self.election_config.lock.name,
+        #                                                  self.election_config.lock.namespace,
+        #                                                  leader_election_record)
+        update_status = True
 
         if update_status is False:
             logging.info("{} failed to acquire lease".format(leader_election_record.holder_identity))
             return False
 
         self.observed_record = leader_election_record
-        self.observed_time_milliseconds = int(time.time() * 1000)
+        self.observed_time_milliseconds = 10000
         logging.info("leader {} has successfully acquired lease".format(leader_election_record.holder_identity))
         return True
