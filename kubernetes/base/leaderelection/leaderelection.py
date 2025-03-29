@@ -303,7 +303,6 @@ class LeaderElection:
         # Follower
         logging.info("{} is a follower".format(self.election_config.lock.identity))
         retry_period = self.election_config.retry_period
-        print(retry_period, "acquire")
         while True:
             succeeded = self.try_acquire_or_renew()
 
