@@ -244,11 +244,13 @@ def make_dummy_config() -> "Config":
     # Provide concrete values that satisfy the preconditions:
     # For example:
     # lease_duration > renew_deadline, renew_deadline > jitter_factor * retry_period, retry_period > 1, etc.
+    """
+    """
     lock = ConfigMapLock("dummyLock", "default", 1000)
     lease_duration = 10
-    renew_deadline = 5  # less than lease_duration
+    renew_deadline = 5
+    jitter_factor = 2
     retry_period = 2
-    jitter_factor = 2  # as defined in the Config class
     
     # Ensure precondition: renew_deadline > retry_period * jitter_factor
     if not (renew_deadline > retry_period * jitter_factor):
@@ -265,19 +267,22 @@ def make_dummy_config() -> "Config":
 
 class LeaderElection:
     global_context = None
-    def __init__(self):
+    def __init__(self, observed_record: LeaderElectionRecord):
         #if election_config is None or not (hasattr(election_config, "lock") and hasattr(election_config, "context") and hasattr(election_config.context, "cancelled")):
         #    sys.exit("Invalid election_config: must have 'lock' and 'context' with 'cancelled'")
         """
+        pre: observed_record.renew_time > 0 and observed_record.lease_duration > 0 and observed_record.acquire_time > 0
         """
 
         self.election_config = make_dummy_config()
-        self.observed_record = LeaderElectionRecord(
-            holder_identity = int(self.election_config.lock.identity),  # Ensure a different identity.
-            lease_duration = 10,  # For example, lease duration is 10 seconds.
-            acquire_time = 10000, # constant value
-            renew_time = 10000    # constant value, meaning the lease is not expired.
-        )
+        # self.observed_record = LeaderElectionRecord(
+        #     holder_identity = int(self.election_config.lock.identity),  # Ensure a different identity.
+        #     lease_duration = 10,  # For example, lease duration is 10 seconds.
+        #     acquire_time = 10000, # constant value
+        #     renew_time = 10000    # constant value, meaning the lease is not expired.
+        # )
+        self.observed_record = observed_record
+        self.observed_record.lease_duration = 10
         self.observed_time_milliseconds = 0
         self.captured_observed_record_before_update = None
         LeaderElection.global_context = self.election_config.context
@@ -288,7 +293,6 @@ class LeaderElection:
     # Point of entry to Leader election
     def run(self):
         """
-        pre: True
         post: __return__ is None
         """
         # Try to create/ acquire a lock
@@ -306,7 +310,7 @@ class LeaderElection:
 
     def acquire(self):
         """
-        pre: self.election_config.retry_period > 1
+
         """
         # Follower
         logging.info("{} is a follower".format(self.election_config.lock.identity))
@@ -322,12 +326,12 @@ class LeaderElection:
 
     def renew_loop(self):
         """
-        pre: self.election_config.renew_deadline > 1
+        pre: self.election_config.renew_deadline > 1 and self.election_config.renew_deadline < 10
         pre: self.election_config.retry_period > 1
         pre: self.election_config.renew_deadline > self.election_config.retry_period * self.election_config.jitter_factor
         pre: self.election_config.lease_duration > 0
         """
-        start_time = 10000
+        start_time = self.observed_record.acquire_time
         logging.info("Leader has entered renew loop and will try to update lease continuously")
         retry_period = self.election_config.retry_period*1000
         renew_deadline = self.election_config.renew_deadline * 1000  # convert to milliseconds
@@ -421,18 +425,18 @@ class LeaderElection:
 
     def try_acquire_or_renew(self):
         """
-        post: (not self.election_config.context.cancelled is True) or (self.election_config.context.cancelled is True and (self.captured_observed_record_before_update.renew_time + self.election_config.lease_duration * 1000 == 10000))
+        post: (not self.election_config.context.cancelled is True) or (self.election_config.context.cancelled is True and (self.captured_observed_record_before_update.renew_time + self.election_config.lease_duration * 1000 == self.observed_record.acquire_time))
         """
 
         # now_timestamp = time.time()
         # now = datetime.datetime.fromtimestamp(now_timestamp)
-        now_timestamp = 10000
-        now = 10000
+        now_timestamp = self.observed_record.acquire_time
+        # now = 10000
 
         # if self.election_config.context.cancelled:
         #     self.force_expire_lease()
         # Check if lock is created
-        # lock_status, old_election_record = self.election_config.lock.get(self.election_config.lock.name,
+        # lock_status, old_election_record self.observed_record.acquire_time= self.election_config.lock.get(self.election_config.lock.name,
         #                                                                 self.election_config.lock.namespace)
         lock_status = True
         old_election_record = self.observed_record
@@ -469,7 +473,7 @@ class LeaderElection:
                 return False
 
             self.observed_record = leader_election_record
-            self.observed_time_milliseconds = 10000
+            self.observed_time_milliseconds = time.time()
             return True
 
         self.captured_observed_record_before_update = self.observed_record
@@ -491,7 +495,7 @@ class LeaderElection:
 
         if self.observed_record is None or old_election_record.__dict__ != self.observed_record.__dict__:
             self.observed_record = old_election_record
-            self.observed_time_milliseconds = 10000
+            self.observed_time_milliseconds = self.observed_record.acquire_time
 
         # If This candidate is not the leader and lease duration is yet to finish
         if (self.election_config.lock.identity != self.observed_record.holder_identity
