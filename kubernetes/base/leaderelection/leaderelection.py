@@ -241,9 +241,7 @@ class Config:
         logging.info("stopped leading".format(self.lock.identity))
 
 def make_dummy_config() -> "Config":
-    # Provide concrete values that satisfy the preconditions:
-    # For example:
-    # lease_duration > renew_deadline, renew_deadline > jitter_factor * retry_period, retry_period > 1, etc.
+
     lock = ConfigMapLock("dummyLock", "default", 1000)
     lease_duration = 10
     renew_deadline = 5  # less than lease_duration
@@ -258,7 +256,6 @@ def make_dummy_config() -> "Config":
     onstarted_leading = lambda: None
     onstopped_leading = lambda: None
 
-    # Create a dummy context that starts with cancelled==False.
     context = Context(True)
     
     return Config(lock, lease_duration, renew_deadline, retry_period, onstarted_leading, onstopped_leading, context)
@@ -267,19 +264,11 @@ def make_dummy_config() -> "Config":
 class LeaderElection:
     global_context = None
     def __init__(self, observed_record: LeaderElectionRecord):
-        #if election_config is None or not (hasattr(election_config, "lock") and hasattr(election_config, "context") and hasattr(election_config.context, "cancelled")):
-        #    sys.exit("Invalid election_config: must have 'lock' and 'context' with 'cancelled'")
         """
         pre: observed_record.renew_time > 0 and observed_record.lease_duration > 0 and observed_record.acquire_time > 0
         """
 
         self.election_config = make_dummy_config()
-        # self.observed_record = LeaderElectionRecord(
-        #     holder_identity = int(self.election_config.lock.identity),  # Ensure a different identity.
-        #     lease_duration = 10,  # For example, lease duration is 10 seconds.
-        #     acquire_time = 10000, # constant value
-        #     renew_time = 10000    # constant value, meaning the lease is not expired.
-        # )
         self.observed_record = observed_record
         self.observed_record.lease_duration = 10
         self.observed_time_milliseconds = 0
@@ -340,8 +329,6 @@ class LeaderElection:
             if self.election_config.context.cancelled:
                 logging.info("Context cancelled")
                 print(self.election_config.context.cancelled, "renew_loop+cancelled?")
-                # If configured to release on cancel, release the lease immediately
-                # if getattr(self.election_config, "ReleaseOnCancel", False):
                 self.force_expire_lease()
                 return
             
@@ -352,7 +339,6 @@ class LeaderElection:
             # while int(time.time() * 1000) < timeout:
             while cur_time < timeout:
                 if self.election_config.context.cancelled:
-                    # logging.info(f"Context cancelled during renew loop. Reason: {self.election_config.context.cancel_reason}")
                     self.force_expire_lease()
                     return
 
@@ -443,7 +429,6 @@ class LeaderElection:
         # now_timestamp = time.time()
         # now = datetime.datetime.fromtimestamp(now_timestamp)
         now_timestamp = self.observed_record.acquire_time
-        # now = 10000
 
         if self.election_config.context.cancelled:
             self.force_expire_lease()
@@ -537,8 +522,7 @@ class LeaderElection:
         if update_status is False:
             logging.info("{} failed to acquire lease".format(leader_election_record.holder_identity))
             return False
-        # leader_election_record = LeaderElectionRecord(self.election_config.lock.identity,
-        #                                              self.election_config.lease_duration, 10000, 10000)
+
         self.observed_record = leader_election_record
         self.observed_time_milliseconds = 10000
         logging.info("leader {} has successfully acquired lease".format(leader_election_record.holder_identity))
