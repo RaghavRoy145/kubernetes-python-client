@@ -333,8 +333,8 @@ class LeaderElection:
         """
         start_time = self.observed_record.acquire_time
         logging.info("Leader has entered renew loop and will try to update lease continuously")
-        retry_period = self.election_config.retry_period*1000
-        renew_deadline = self.election_config.renew_deadline * 1000  # convert to milliseconds
+        retry_period = self.election_config.retry_period
+        renew_deadline = self.election_config.renew_deadline # convert to milliseconds
 
         while True:
             # Check for context cancellation
@@ -360,9 +360,22 @@ class LeaderElection:
                 if self.try_acquire_or_renew():
                     succeeded = True
                     break
-                time.sleep(retry_period)
+
+                # Capture the current variant value.
+                old_variant = timeout - cur_time
+                # Sleep for one retry_period.
+                time.sleep(retry_period)  # converting back to seconds for sleep
+                # Simulate passage of time by incrementing cur_time deterministically.
                 cur_time += retry_period
-                print(cur_time, "renew_loop + curtime")
+                # Assert that our variant has decreased exactly by retry_period.
+                new_variant = timeout - cur_time
+                assert new_variant == old_variant - retry_period, "Variant should decrease by retry_period each iteration"
+                # Also, assert that variant remains nonnegative.
+                assert new_variant >= 0, "Variant must remain nonnegative"
+
+            # After the inner loop, assert the invariant that cur_time is at least timeout.
+            assert (succeeded) or (not succeeded and cur_time >= timeout), "Inner loop termination: cur_time must be >= timeout"
+
             if succeeded:
                 time.sleep(retry_period)
                 continue
@@ -409,7 +422,7 @@ class LeaderElection:
     #     observed_record.renew_time + lease_duration*1000 <= 10000.
     #     """
     #     # For example, choose the expired value to be exactly 10000 - lease_duration*1000.
-    #     expired_value = 10000 - self.election_config.lease_duration * 1000
+    #     expired_value = self.observed_record.acquire_time - self.election_config.lease_duration * 1000
     #     if self.observed_record is None:
     #         # If no record exists, create one with expired renew_time.
     #         self.observed_record = LeaderElectionRecord(
