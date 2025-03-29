@@ -240,7 +240,7 @@ class Config:
     def on_stoppedleading_callback(self):
         logging.info("stopped leading".format(self.lock.identity))
 
-def make_dummy_config(cancelled: bool) -> "Config":
+def make_dummy_config() -> "Config":
     # Provide concrete values that satisfy the preconditions:
     # For example:
     # lease_duration > renew_deadline, renew_deadline > jitter_factor * retry_period, retry_period > 1, etc.
@@ -259,21 +259,21 @@ def make_dummy_config(cancelled: bool) -> "Config":
     onstopped_leading = lambda: None
 
     # Create a dummy context that starts with cancelled==False.
-    context = Context(cancelled=cancelled)
+    context = Context(True)
     
     return Config(lock, lease_duration, renew_deadline, retry_period, onstarted_leading, onstopped_leading, context)
 
 
 class LeaderElection:
     global_context = None
-    def __init__(self, observed_record: LeaderElectionRecord, cancelled: bool):
+    def __init__(self, observed_record: LeaderElectionRecord):
         #if election_config is None or not (hasattr(election_config, "lock") and hasattr(election_config, "context") and hasattr(election_config.context, "cancelled")):
         #    sys.exit("Invalid election_config: must have 'lock' and 'context' with 'cancelled'")
         """
         pre: observed_record.renew_time > 0 and observed_record.lease_duration > 0 and observed_record.acquire_time > 0
         """
 
-        self.election_config = make_dummy_config(cancelled=cancelled)
+        self.election_config = make_dummy_config()
         # self.observed_record = LeaderElectionRecord(
         #     holder_identity = int(self.election_config.lock.identity),  # Ensure a different identity.
         #     lease_duration = 10,  # For example, lease duration is 10 seconds.
