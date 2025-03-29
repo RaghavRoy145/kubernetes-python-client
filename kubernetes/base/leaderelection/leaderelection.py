@@ -265,13 +265,19 @@ def make_dummy_config() -> "Config":
 
 class LeaderElection:
     global_context = None
-    def __init__(self, observed_record: LeaderElectionRecord):
+    def __init__(self):
         #if election_config is None or not (hasattr(election_config, "lock") and hasattr(election_config, "context") and hasattr(election_config.context, "cancelled")):
         #    sys.exit("Invalid election_config: must have 'lock' and 'context' with 'cancelled'")
         """
         """
-        self.observed_record = observed_record
+
         self.election_config = make_dummy_config()
+        self.observed_record = LeaderElectionRecord(
+            holder_identity = int(self.election_config.lock.identity),  # Ensure a different identity.
+            lease_duration = 10,  # For example, lease duration is 10 seconds.
+            acquire_time = 10000, # constant value
+            renew_time = 10000    # constant value, meaning the lease is not expired.
+        )
         self.observed_time_milliseconds = 0
         self.captured_observed_record_before_update = None
         LeaderElection.global_context = self.election_config.context
@@ -415,9 +421,7 @@ class LeaderElection:
 
     def try_acquire_or_renew(self):
         """
-        pre: self.election_config.lease_duration > 0
-        pre: self.election_config.lock is not None
-        post: (not self.election_config.context.cancelled is True) or (self.election_config.context.cancelled is True and self.captured_observed_record_before_update.renew_time + self.election_config.lease_duration * 1000 <= 10000)
+        post: (not self.election_config.context.cancelled is True) or (self.election_config.context.cancelled is True and (self.captured_observed_record_before_update.renew_time + self.election_config.lease_duration * 1000 == 10000))
         """
 
         # now_timestamp = time.time()
@@ -469,7 +473,7 @@ class LeaderElection:
             return True
 
         self.captured_observed_record_before_update = self.observed_record
-        logging.info("{}".format(self.captured_observed_record_before_update.renew_time))
+        logging.info("{}, {}, {}".format(self.election_config.context.cancelled, self.captured_observed_record_before_update.renew_time, self.election_config.lease_duration))
         # A lock exists with that name
         # Validate old_election_record
         if old_election_record is None:
