@@ -469,6 +469,7 @@ class LeaderElection:
             return True
 
         self.captured_observed_record_before_update = self.observed_record
+        logging.info("{}".format(self.captured_observed_record_before_update.renew_time))
         # A lock exists with that name
         # Validate old_election_record
         if old_election_record is None:
